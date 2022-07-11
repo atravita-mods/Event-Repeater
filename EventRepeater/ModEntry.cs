@@ -51,7 +51,7 @@ namespace EventRepeater
             foreach (IModInfo mod in this.Helper.ModRegistry.GetAll())
             {
                 // make sure it's a Content Patcher pack
-                if (!mod.IsContentPack || !mod.Manifest.ContentPackFor!.UniqueID.Trim().Equals("Pathoschild.ContentPatcher", StringComparison.InvariantCultureIgnoreCase))
+                if (!mod.IsContentPack || !mod.Manifest.ContentPackFor!.UniqueID.AsSpan().Trim().Equals("Pathoschild.ContentPatcher", StringComparison.InvariantCultureIgnoreCase))
                     continue;
 
                 // get the directory path containing the manifest.json
@@ -63,7 +63,14 @@ namespace EventRepeater
                 //     reflection instead.
                 //   - SMAPI's data API doesn't let us access an absolute path, so we need to parse
                 //     the model ourselves.
-                string? directoryPath = mod.GetType().GetProperty("DirectoryPath")?.GetValue(mod) as string;
+
+                IMod? modimpl = mod.GetType().GetProperty("Mod")?.GetValue(mod) as IMod;
+                if (modimpl is null)
+                    throw new InvalidDataException($"Couldn't grab mod from modinfo {mod.Manifest}");
+                if (!modimpl.ModManifest.Dependencies.Any((dep) => dep.UniqueID.AsSpan().Trim().Equals("misscoriel.eventrepeater", StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                string? directoryPath = modimpl.Helper.DirectoryPath;
                 if (directoryPath is null)
                     throw new InvalidOperationException($"Couldn't fetch the DirectoryPath property from the mod info for {mod.Manifest.Name}.");
 
