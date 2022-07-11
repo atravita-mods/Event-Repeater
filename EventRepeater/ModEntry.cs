@@ -1,14 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
-using StardewModdingAPI.Utilities;
 using StardewValley;
-using Newtonsoft.Json;
-using System.Runtime.InteropServices;
-using System.Diagnostics.Eventing.Reader;
 using System.Linq;
 
 namespace EventRepeater
@@ -20,13 +15,11 @@ namespace EventRepeater
         ** Fields
         *********/
         /// <summary>The event IDs to forget.</summary>
-        private HashSet<int> EventsToForget = new HashSet<int>();
-        private HashSet<string> MailToForget = new HashSet<string>();
-        private HashSet<int> ResponseToForget = new HashSet<int>();
-        private Event LastEvent;
-        private List<int> ManualRepeaterList = new List<int>();
-        
-
+        private readonly HashSet<int> EventsToForget = new();
+        private readonly HashSet<string> MailToForget = new();
+        private readonly HashSet<int> ResponseToForget = new();
+        private Event? LastEvent;
+        private readonly List<int> ManualRepeaterList = new();
 
         /*********
         ** Public methods
@@ -38,12 +31,27 @@ namespace EventRepeater
             helper.Events.GameLoop.DayStarted += this.OnDayStarted;
             helper.Events.GameLoop.UpdateTicked += this.UpdateTicked;
 
-            // collect data models
-            IList<ThingsToForget> models = new List<ThingsToForget>();
+            helper.Events.GameLoop.GameLaunched += this.OnLaunched;
+            helper.ConsoleCommands.Add("eventforget", "'usage: eventforget <id>", this.ForgetManualCommand);
+            helper.ConsoleCommands.Add("showevents", "'usage: Lists all completed events", this.ShowEventsCommand);
+            helper.ConsoleCommands.Add("showmail", "'usage: Lists all seen mail", this.ShowMailCommand);
+            helper.ConsoleCommands.Add("mailforget", "'usage: mailforget <id>", this.ForgetMailCommand);
+            helper.ConsoleCommands.Add("sendme", "'usage: sendme <id>", this.SendMailCommand);
+            helper.ConsoleCommands.Add("showresponse", "'usage: Lists Response IDs.  For ADVANCED USERS!!", this.ShowResponseCommand);
+            helper.ConsoleCommands.Add("responseforget", "'usage: responseforget <id>'", this.ForgetResponseCommand);
+            //helper.ConsoleCommands.Add("responseadd", "'usage: responseadd <id>'  Inject a question response.", ResponseAddCommand);
+            helper.ConsoleCommands.Add("repeateradd", "'usage: repeateradd <id(optional)>' Create a repeatable event.  If no id is given, the last seen will be repeated.  Works on Next Day", this.ManualRepeater);
+            helper.ConsoleCommands.Add("repeatersave", "'usage: repeatersave <filename>' Creates a textfile with all events you set to repeat manually.", this.SaveManualCommand);
+            helper.ConsoleCommands.Add("repeaterload", "'usage: repeaterload <filename>' Loads the file you designate.", this.LoadCommand);
+            helper.ConsoleCommands.Add("inject", "'usage: inject <event, mail, response> <ID>' Example: 'inject event 1324329'  Inject IDs into the game.", this.injectCommand);
+        }
+
+        private void OnLaunched(object? sender, GameLaunchedEventArgs e)
+        {
             foreach (IModInfo mod in this.Helper.ModRegistry.GetAll())
             {
                 // make sure it's a Content Patcher pack
-                if (!mod.IsContentPack || mod.Manifest.ContentPackFor?.UniqueID.Trim().Equals("Pathoschild.ContentPatcher", StringComparison.InvariantCultureIgnoreCase) != true)
+                if (!mod.IsContentPack || !mod.Manifest.ContentPackFor!.UniqueID.Trim().Equals("Pathoschild.ContentPatcher", StringComparison.InvariantCultureIgnoreCase))
                     continue;
 
                 // get the directory path containing the manifest.json
@@ -55,55 +63,33 @@ namespace EventRepeater
                 //     reflection instead.
                 //   - SMAPI's data API doesn't let us access an absolute path, so we need to parse
                 //     the model ourselves.
-                string directoryPath = (string)mod.GetType().GetProperty("DirectoryPath")?.GetValue(mod);
-                if (directoryPath == null)
+                string? directoryPath = mod.GetType().GetProperty("DirectoryPath")?.GetValue(mod) as string;
+                if (directoryPath is null)
                     throw new InvalidOperationException($"Couldn't fetch the DirectoryPath property from the mod info for {mod.Manifest.Name}.");
 
+                // May be worthwhile insisting on a dependency here?
+
                 // read the JSON file
-                IContentPack contentPack = this.Helper.ContentPacks.CreateFake(directoryPath);
-                models.Add(contentPack.ReadJsonFile<ThingsToForget>("content.json"));
+                IContentPack? contentPack = this.Helper.ContentPacks.CreateFake(directoryPath);
+                var model = contentPack.ReadJsonFile<ThingsToForget>("content.json");
                 // extract event IDs
-                foreach (ThingsToForget model in models)
+                if (model?.RepeatEvents is not null && model.RepeatEvents.Count > 0)
                 {
-                    if (model?.RepeatEvents == null)
-                        continue;
-
-                    foreach (int eventID in model.RepeatEvents)
-                        this.EventsToForget.Add(eventID);
-
+                    this.EventsToForget.UnionWith(model.RepeatEvents);
+                    this.Monitor.Log($"Loading {model.RepeatEvents.Count} forgettable events for {mod.Manifest.UniqueID}");
                 }
-                foreach (ThingsToForget model in models)
+                if (model?.RepeatMail is not null && model.RepeatMail.Count > 0)
                 {
-                    if (model?.RepeatMail == null)
-                        continue;
-
-                    foreach (string mailID in model.RepeatMail)
-                        this.MailToForget.Add(mailID);
-
+                    this.MailToForget.UnionWith(model.RepeatMail);
+                    this.Monitor.Log($"Loading {model.RepeatMail.Count} forgettable mail for {mod.Manifest.UniqueID}");
                 }
-                foreach (ThingsToForget model in models)
+                if (model?.RepeatResponse is not null && model.RepeatResponse.Count > 0)
                 {
-                    if (model?.RepeatResponse == null)
-                        continue;
-
-                    foreach (int ResponseID in model.RepeatResponse)
-                        this.ResponseToForget.Add(ResponseID);
-
-                } 
-
+                    this.ResponseToForget.UnionWith(model.RepeatResponse);
+                    this.Monitor.Log($"Loading{model.RepeatResponse.Count} forgettable mail for {mod.Manifest.UniqueID}");
+                }
             }
-                helper.ConsoleCommands.Add("eventforget", "'usage: eventforget <id>", ForgetManualCommand);
-                helper.ConsoleCommands.Add("showevents", "'usage: Lists all completed events", ShowEventsCommand);
-                helper.ConsoleCommands.Add("showmail", "'usage: Lists all seen mail", ShowMailCommand);
-                helper.ConsoleCommands.Add("mailforget", "'usage: mailforget <id>", ForgetMailCommand);
-                helper.ConsoleCommands.Add("sendme", "'usage: sendme <id>", SendMailCommand);
-                helper.ConsoleCommands.Add("showresponse", "'usage: Lists Response IDs.  For ADVANCED USERS!!", ShowResponseCommand);
-                helper.ConsoleCommands.Add("responseforget", "'usage: responseforget <id>'", ForgetResponseCommand);
-                //helper.ConsoleCommands.Add("responseadd", "'usage: responseadd <id>'  Inject a question response.", ResponseAddCommand);
-                helper.ConsoleCommands.Add("repeateradd", "'usage: repeateradd <id(optional)>' Create a repeatable event.  If no id is given, the last seen will be repeated.  Works on Next Day", ManualRepeater);
-                helper.ConsoleCommands.Add("repeatersave", "'usage: repeatersave <filename>' Creates a textfile with all events you set to repeat manually.", SaveManualCommand);
-                helper.ConsoleCommands.Add("repeaterload", "'usage: repeaterload <filename>' Loads the file you designate.", LoadCommand);
-                helper.ConsoleCommands.Add("inject", "'usage: inject <event, mail, response> <ID>' Example: 'inject event 1324329'  Inject IDs into the game.", injectCommand);
+            this.Monitor.Log($"Loaded a grand total of\n\t{this.EventsToForget.Count} events\n\t{this.MailToForget.Count} mail\n\t{this.ResponseToForget.Count} responses");
         }
 
         /*********
@@ -113,9 +99,9 @@ namespace EventRepeater
         /// <param name="sender">The event sender.</param>
         /// <param name="e">The event data.</param>
         /// 
-        private void UpdateTicked(object sender, UpdateTickedEventArgs e)
+        private void UpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
-            if (this.LastEvent == null && Game1.CurrentEvent != null)
+            if (this.LastEvent is null && Game1.CurrentEvent is not null)
                 this.OnEventStarted(Game1.CurrentEvent);
 
             this.LastEvent = Game1.CurrentEvent;
@@ -123,7 +109,7 @@ namespace EventRepeater
 
         private void OnEventStarted(Event @event)
         {
-            Game1.CurrentEvent.eventCommands = this.ExtractCommands(Game1.CurrentEvent.eventCommands, new[] { "forgetEvent", "forgetMail", "forgetResponse" }, out ISet<string> extractedCommands);
+            Game1.CurrentEvent.eventCommands = ExtractCommands(Game1.CurrentEvent.eventCommands, new[] { "forgetEvent", "forgetMail", "forgetResponse" }, out ISet<string> extractedCommands);
 
             foreach (string command in extractedCommands)
             {
@@ -145,9 +131,14 @@ namespace EventRepeater
                 {
                     case "forgetEvent":
                         if (int.TryParse(rawId, out int eventID))
+                        {
                             Game1.player.eventsSeen.Remove(eventID);
+                        }
                         else
+                        {
                             this.Monitor.Log($"Could not parse event ID '{rawId}' for {commandName} command.", LogLevel.Warn);
+                        }
+
                         break;
 
                     case "forgetMail":
@@ -161,7 +152,9 @@ namespace EventRepeater
                             //this.Monitor.Log($"Removed {responseID}", LogLevel.Debug);
                         }
                         else
+                        {
                             this.Monitor.Log($"Could not parse response ID '{rawId}' for {commandName} command.", LogLevel.Warn);
+                        }
                         break;
 
                     default:
@@ -170,9 +163,9 @@ namespace EventRepeater
                 }
             }
         }
-        private string[] ExtractCommands(string[] commands, string[] commandNamesToExtract, out ISet<string> extractedCommands)
+        private static string[] ExtractCommands(string[] commands, string[] commandNamesToExtract, out ISet<string> extractedCommands)
         {
-            var otherCommands = new List<string>();
+            var otherCommands = new List<string>(commands.Length);
             extractedCommands = new HashSet<string>();
             foreach (string command in commands)
             {
@@ -184,75 +177,79 @@ namespace EventRepeater
 
             return otherCommands.ToArray();
         }
-        private void OnDayStarted(object sender, DayStartedEventArgs e)
+
+        [EventPriority(EventPriority.High + 1000)]
+        private void OnDayStarted(object? sender, DayStartedEventArgs e)
         {
-            foreach (var seenEvent in this.EventsToForget)
+            bool removed = false;
+            if (this.EventsToForget.Count > 0 || this.ManualRepeaterList.Count > 0)
             {
-                bool anyEventRemoved = false;
-
-                
-                    if (Game1.player.eventsSeen.Remove(seenEvent))
+                for (int i = Game1.player.eventsSeen.Count - 1; i >= 0; i--)
+                {
+                    var evt = Game1.player.eventsSeen[i];
+                    if (this.EventsToForget.Contains(evt))
                     {
-                        anyEventRemoved = true;
-                        this.Monitor.Log("Repeatable Event Found! Resetting for next time! Event ID: " + seenEvent, LogLevel.Debug);
+                        this.Monitor.Log("Repeatable Event Found! Resetting for next time! Event ID: " + evt);
+                        Game1.player.eventsSeen.RemoveAt(i);
+                        removed = true;
                     }
-                
-
-                if (!anyEventRemoved)
-                    this.Monitor.Log("You have not seen any Repeatable Events.");
-            }
-            
-            foreach (string seenMail in this.MailToForget)
-            {
-                bool anyMailRemoved = false;
-                if (Game1.player.mailReceived.Remove(seenMail))
-                {
-                    anyMailRemoved = true;
-                    Monitor.Log("Repeatable Mail found!  Resetting: " + seenMail, LogLevel.Debug);
-                }
-                if (!anyMailRemoved)
-                {
-                    this.Monitor.Log("You have not opened any Repeatable mail.");
-                }
-                    
-            }
-            foreach (var seenResponse in this.ResponseToForget)
-            {
-                bool anyResponseRemoved = false;
-                if (Game1.player.dialogueQuestionsAnswered.Remove(seenResponse))
-                {
-                    anyResponseRemoved = true;
-                    Monitor.Log("Repeatable Response Found! Resetting: " + seenResponse, LogLevel.Debug);
-                }
-                if (!anyResponseRemoved)
-                {
-                    this.Monitor.Log("No repeatable responses found.");
-                }
-            }
-            if (ManualRepeaterList.Count != 0)
-            {
-                foreach(int manualEvent in ManualRepeaterList)
-                {
-                    bool manualEventsRemoved = false;
-                    if(Game1.player.eventsSeen.Remove(manualEvent))
+                    else if (this.ManualRepeaterList.Contains(evt))
                     {
-                        manualEventsRemoved = true;
-                        Monitor.Log("Manual Repeater Engaged! Resetting: " + manualEvent, LogLevel.Debug);
-                    }
-                    if(!manualEventsRemoved)
-                    {
-                        Monitor.Log("Manual Repeater is not being used.", LogLevel.Debug);
+                        this.Monitor.Log("Manual Repeater Engaged! Resetting: " + evt);
+                        Game1.player.eventsSeen.RemoveAt(i);
+                        removed = true;
                     }
                 }
             }
+            if (!removed)
+            {
+                this.Monitor.Log("No repeatable events were removed");
+            }
 
+            removed = false;
+            if (this.MailToForget.Count > 0)
+            {
+                for (int i = Game1.player.mailReceived.Count - 1; i >= 0; i--)
+                {
+                    var msg = Game1.player.mailReceived[i];
+                    if (this.MailToForget.Contains(msg))
+                    {
+                        this.Monitor.Log("Repeatable Mail found!  Resetting: " + msg);
+                        Game1.player.mailReceived.RemoveAt(i);
+                        removed = true;
+                    }
+                }
+            }
+            if (!removed)
+            {
+                this.Monitor.Log("No repeatable mail found for removal.");
+            }
+
+            removed = false;
+            if (this.ResponseToForget.Count > 0)
+            {
+                for (int i = Game1.player.dialogueQuestionsAnswered.Count - 1; i >= 0; i--)
+                {
+                    var response = Game1.player.dialogueQuestionsAnswered[i];
+                    if (this.ResponseToForget.Contains(response))
+                    {
+                        Game1.player.dialogueQuestionsAnswered.RemoveAt(i);
+                        this.Monitor.Log("Repeatable Response Found! Resetting: " + response);
+                        removed = true;
+                    }
+                }
+            }
+            if (!removed)
+            {
+                this.Monitor.Log("No repeatable responses found.");
+            }
         }
 
         private void ManualRepeater(string command, string[] parameters)
         {
             //This command will set a manual repeat to a list and save the event IDs to a file in the SDV folder.  
             //The first thing to do is create a list
-            List<int> eventsSeenList = new List<int>();
+            List<int> eventsSeenList = new();
             //Populate that list with Game1.eventseen
             foreach(int eventID in Game1.player.eventsSeen)
             {
@@ -263,29 +260,38 @@ namespace EventRepeater
             {
                 try
                 {
-                    int lastEvent = eventsSeenList[eventsSeenList.Count - 1];//Count -1 to account for 0
-                    Game1.player.eventsSeen.Remove(lastEvent);//Removes ID from events seen
-                    ManualRepeaterList.Add(lastEvent);//Adds to the Manual List
-                    Monitor.Log($"{lastEvent} has been added to Manual Repeater", LogLevel.Debug);
+                    int lastEvent = eventsSeenList[^1];
+                    Game1.player.eventsSeen.RemoveAt(Game1.player.eventsSeen.Count - 1); // Remove the last ID.
+                    this.ManualRepeaterList.Add(lastEvent);//Adds to the Manual List
+                    this.Monitor.Log($"{lastEvent} has been added to Manual Repeater", LogLevel.Debug);
                 }
                 catch (Exception ex)
                 {
-                    Monitor.Log(ex.Message, LogLevel.Warn);
+                    this.Monitor.Log(ex.Message, LogLevel.Warn);
                 }
             }
             else
             {
                 try
                 {
-                    //convert parameters to int
-                    int parseParameter = Int32.Parse(parameters[0]);
-                    ManualRepeaterList.Add(parseParameter);
-                    Game1.player.eventsSeen.Remove(parseParameter);
-                    Monitor.Log($"{parseParameter} has been added to Manual Repeater", LogLevel.Debug);
+                    foreach (string? param in parameters)
+                    {
+                        if (int.TryParse(param, out int evt))
+                        {
+                            this.ManualRepeaterList.Add(evt);
+                            Game1.player.eventsSeen.Remove(evt);
+                            this.Monitor.Log($"{evt} has been added to Manual Repeater", LogLevel.Debug);
+                        }
+                        else
+                        {
+                            this.Monitor.Log($"{param} was not a valid event!", LogLevel.Warn);
+                        }
+                    }
+                    
                 }
                 catch(Exception ex)
                 {
-                    Monitor.Log(ex.Message, LogLevel.Warn);
+                    this.Monitor.Log(ex.Message, LogLevel.Warn);
                 }
             }
 
@@ -296,15 +302,15 @@ namespace EventRepeater
             //Create Directory
             Directory.CreateDirectory(Environment.CurrentDirectory + "\\ManualRepeaterFiles");
             string savePath = Environment.CurrentDirectory + "\\ManualRepeaterFiles\\" + parameters[0] + ".txt"; //Saves file in the name you designate
-            string[] parse = new string[ManualRepeaterList.Count];
+            string[] parse = new string[this.ManualRepeaterList.Count];
             int i = 0; //start at beginning of manual list
-            foreach(var item in ManualRepeaterList)//Converts the Manual list to a string array
+            foreach(var item in this.ManualRepeaterList)//Converts the Manual list to a string array
             {
                 parse[i] = item.ToString();
                 i++;
             }
             File.WriteAllLines(savePath, parse);
-            Monitor.Log($"Saved file to {savePath}", LogLevel.Debug);
+            this.Monitor.Log($"Saved file to {savePath}", LogLevel.Debug);
         }
         private void LoadCommand(string command, string[] parameters)
         {
@@ -320,10 +326,10 @@ namespace EventRepeater
                 foreach(string eventID in FileIDs)
                 {
                     int parse = Int32.Parse(eventID);
-                    ManualRepeaterList.Add(parse);
+                    this.ManualRepeaterList.Add(parse);
                     Game1.player.eventsSeen.Remove(parse);
                 }
-                Monitor.Log($"{parameters[0]} loaded!", LogLevel.Debug);
+                this.Monitor.Log($"{parameters[0]} loaded!", LogLevel.Debug);
             }
         }
 
@@ -334,7 +340,7 @@ namespace EventRepeater
             {
                 int eventToForget = int.Parse(parameters[0]);
                 Game1.player.eventsSeen.Remove(eventToForget);
-                Monitor.Log("Forgetting event id: " + eventToForget, LogLevel.Debug);
+                this.Monitor.Log("Forgetting event id: " + eventToForget, LogLevel.Debug);
 
             }
             catch (Exception) { }
@@ -346,7 +352,7 @@ namespace EventRepeater
             {
                 eventsSeen += e + ", ";
             }
-            Monitor.Log(eventsSeen, LogLevel.Debug);
+            this.Monitor.Log(eventsSeen, LogLevel.Debug);
         }
         private void ShowMailCommand(string command, string[] parameters)
         {
@@ -355,7 +361,7 @@ namespace EventRepeater
             {
                 mailSeen += e + ", ";
             }
-            Monitor.Log(mailSeen, LogLevel.Debug);
+            this.Monitor.Log(mailSeen, LogLevel.Debug);
         }
         private void ForgetMailCommand(string command, string[] parameters)
         {
@@ -364,7 +370,7 @@ namespace EventRepeater
             {
                 string MailToForget = parameters[0];
                 Game1.player.mailReceived.Remove(MailToForget);
-                Monitor.Log("Forgetting event id: " + MailToForget, LogLevel.Debug);
+                this.Monitor.Log("Forgetting event id: " + MailToForget, LogLevel.Debug);
 
             }
             catch (Exception) { }
@@ -376,7 +382,7 @@ namespace EventRepeater
             {
                 string MailtoSend = parameters[0];
                 Game1.addMailForTomorrow(MailtoSend);
-                Monitor.Log("Check Mail Tomorrow!! Sending: " + MailtoSend, LogLevel.Debug);
+                this.Monitor.Log("Check Mail Tomorrow!! Sending: " + MailtoSend, LogLevel.Debug);
 
             }
             catch (Exception) { }
@@ -388,7 +394,7 @@ namespace EventRepeater
             {
                 dialogueQuestionsAnswered += e + ", ";
             }
-            Monitor.Log(dialogueQuestionsAnswered, LogLevel.Debug);
+            this.Monitor.Log(dialogueQuestionsAnswered, LogLevel.Debug);
         }
         private void ForgetResponseCommand(string command, string[] parameters)
         {
@@ -397,7 +403,7 @@ namespace EventRepeater
             {
                 int responseToForget = int.Parse(parameters[0]);
                 Game1.player.dialogueQuestionsAnswered.Remove(responseToForget);
-                Monitor.Log("Forgetting Response ID: " + responseToForget, LogLevel.Debug);
+                this.Monitor.Log("Forgetting Response ID: " + responseToForget, LogLevel.Debug);
 
             }
             catch (Exception) { }
@@ -409,7 +415,7 @@ namespace EventRepeater
             {
                 int responseAdd = int.Parse(parameters[0]);
                 Game1.player.dialogueQuestionsAnswered.Add(responseAdd);
-                Monitor.Log("Injecting Response ID: " + responseAdd, LogLevel.Debug);
+                this.Monitor.Log("Injecting Response ID: " + responseAdd, LogLevel.Debug);
             }
             catch (Exception) { }
                         
@@ -425,15 +431,15 @@ namespace EventRepeater
             {
                 if (parameters[0] == "response")
                 {
-                    Monitor.Log("No response ID entered.  Please input a response ID", LogLevel.Error);
+                    this.Monitor.Log("No response ID entered.  Please input a response ID", LogLevel.Error);
                 }
                 if (parameters[0] == "mail")
                 {
-                    Monitor.Log("No mail ID entered.  Please input a mail ID", LogLevel.Error);
+                    this.Monitor.Log("No mail ID entered.  Please input a mail ID", LogLevel.Error);
                 }
                 if (parameters[0] == "event")
                 {
-                    Monitor.Log("No event ID entered.  Please input a event ID", LogLevel.Error);
+                    this.Monitor.Log("No event ID entered.  Please input a event ID", LogLevel.Error);
                 }
             }
             if (parameters.Length == 2)
@@ -444,13 +450,13 @@ namespace EventRepeater
                     int parameterParse = int.Parse(parameters[1]);
                     if(Game1.player.eventsSeen.Contains(parameterParse))
                     {
-                        Monitor.Log($"{parameters[1]} Already exists within seen events.", LogLevel.Warn);
+                        this.Monitor.Log($"{parameters[1]} Already exists within seen events.", LogLevel.Warn);
                         return;
                     }
                     else
                     {
                         Game1.player.eventsSeen.Add(parameterParse);
-                        Monitor.Log($"{parameters[1]} has been added to the seen events list.", LogLevel.Debug);
+                        this.Monitor.Log($"{parameters[1]} has been added to the seen events list.", LogLevel.Debug);
                         return;
                     }
                 }
@@ -459,14 +465,14 @@ namespace EventRepeater
                     int parameterParse = int.Parse(parameters[1]);
                     if(Game1.player.dialogueQuestionsAnswered.Contains(parameterParse))
                     {
-                        Monitor.Log($"{parameters[1]} Already exists within the response list.", LogLevel.Warn);
+                        this.Monitor.Log($"{parameters[1]} Already exists within the response list.", LogLevel.Warn);
                         return;
 
                     }
                     else
                     {
                         Game1.player.dialogueQuestionsAnswered.Add(parameterParse);
-                        Monitor.Log($"{parameters[1]} has been added to the response list.", LogLevel.Debug);
+                        this.Monitor.Log($"{parameters[1]} has been added to the response list.", LogLevel.Debug);
                         return;
 
                     }
@@ -475,13 +481,13 @@ namespace EventRepeater
                 {
                     if(Game1.player.mailReceived.Contains(parameters[1]))
                     {
-                        Monitor.Log($"{parameters[1]} Already exists within seen events.", LogLevel.Warn);
+                        this.Monitor.Log($"{parameters[1]} Already exists within seen events.", LogLevel.Warn);
                         return;
                     }
                     else
                     {
                         Game1.player.mailReceived.Add(parameters[1]);
-                        Monitor.Log($"{parameters[1]} has been added to the seen events list.", LogLevel.Debug);
+                        this.Monitor.Log($"{parameters[1]} has been added to the seen events list.", LogLevel.Debug);
                         return;
 
                     }
