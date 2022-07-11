@@ -64,13 +64,13 @@ namespace EventRepeater
                 //   - SMAPI's data API doesn't let us access an absolute path, so we need to parse
                 //     the model ourselves.
 
-                IMod? modimpl = mod.GetType().GetProperty("Mod")?.GetValue(mod) as IMod;
+                IContentPack? modimpl = mod.GetType().GetProperty("ContentPack")!.GetValue(mod) as IContentPack;
                 if (modimpl is null)
                     throw new InvalidDataException($"Couldn't grab mod from modinfo {mod.Manifest}");
-                if (!modimpl.ModManifest.Dependencies.Any((dep) => dep.UniqueID.AsSpan().Trim().Equals("misscoriel.eventrepeater", StringComparison.OrdinalIgnoreCase)))
+                if (!modimpl.Manifest.Dependencies.Any((dep) => dep.UniqueID.AsSpan().Trim().Equals("misscoriel.eventrepeater", StringComparison.OrdinalIgnoreCase)))
                     continue;
 
-                string? directoryPath = modimpl.Helper.DirectoryPath;
+                string? directoryPath = modimpl.DirectoryPath;
                 if (directoryPath is null)
                     throw new InvalidOperationException($"Couldn't fetch the DirectoryPath property from the mod info for {mod.Manifest.Name}.");
 
