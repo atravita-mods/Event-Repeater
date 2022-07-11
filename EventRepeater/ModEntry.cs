@@ -70,15 +70,8 @@ namespace EventRepeater
                 if (!modimpl.Manifest.Dependencies.Any((dep) => dep.UniqueID.AsSpan().Trim().Equals("misscoriel.eventrepeater", StringComparison.OrdinalIgnoreCase)))
                     continue;
 
-                string? directoryPath = modimpl.DirectoryPath;
-                if (directoryPath is null)
-                    throw new InvalidOperationException($"Couldn't fetch the DirectoryPath property from the mod info for {mod.Manifest.Name}.");
-
-                // May be worthwhile insisting on a dependency here?
-
                 // read the JSON file
-                IContentPack? contentPack = this.Helper.ContentPacks.CreateFake(directoryPath);
-                if (contentPack.ReadJsonFile<ThingsToForget>("content.json") is not ThingsToForget model)
+                if (modimpl.ReadJsonFile<ThingsToForget>("content.json") is not ThingsToForget model)
                     continue;
                 // extract event IDs
                 if (model.RepeatEvents?.Count is > 0)
