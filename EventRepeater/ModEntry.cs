@@ -78,19 +78,20 @@ namespace EventRepeater
 
                 // read the JSON file
                 IContentPack? contentPack = this.Helper.ContentPacks.CreateFake(directoryPath);
-                var model = contentPack.ReadJsonFile<ThingsToForget>("content.json");
+                if (contentPack.ReadJsonFile<ThingsToForget>("content.json") is not ThingsToForget model)
+                    continue;
                 // extract event IDs
-                if (model?.RepeatEvents is not null && model.RepeatEvents.Count > 0)
+                if (model.RepeatEvents?.Count is > 0)
                 {
                     this.EventsToForget.UnionWith(model.RepeatEvents);
                     this.Monitor.Log($"Loading {model.RepeatEvents.Count} forgettable events for {mod.Manifest.UniqueID}");
                 }
-                if (model?.RepeatMail is not null && model.RepeatMail.Count > 0)
+                if (model.RepeatMail?.Count is > 0)
                 {
                     this.MailToForget.UnionWith(model.RepeatMail);
                     this.Monitor.Log($"Loading {model.RepeatMail.Count} forgettable mail for {mod.Manifest.UniqueID}");
                 }
-                if (model?.RepeatResponse is not null && model.RepeatResponse.Count > 0)
+                if (model.RepeatResponse?.Count is > 0)
                 {
                     this.ResponseToForget.UnionWith(model.RepeatResponse);
                     this.Monitor.Log($"Loading{model.RepeatResponse.Count} forgettable mail for {mod.Manifest.UniqueID}");
