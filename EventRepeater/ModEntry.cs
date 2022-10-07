@@ -105,27 +105,35 @@ namespace EventRepeater
                 IContentPack? modimpl = mod.GetType().GetProperty("ContentPack")!.GetValue(mod) as IContentPack;
                 if (modimpl is null)
                     throw new InvalidDataException($"Couldn't grab mod from modinfo {mod.Manifest}");
-                if (!modimpl.Manifest.Dependencies.Any((dep) => dep.UniqueID.AsSpan().Trim().Equals("misscoriel.eventrepeater", StringComparison.OrdinalIgnoreCase)))
-                    continue;
 
                 // read the JSON file
                 if (modimpl.ReadJsonFile<ThingsToForget>("content.json") is not ThingsToForget model)
                     continue;
+
+                bool loaded = false;
                 // extract event IDs
                 if (model.RepeatEvents?.Count is > 0)
                 {
                     this.EventsToForget.UnionWith(model.RepeatEvents);
                     this.Monitor.Log($"Loading {model.RepeatEvents.Count} forgettable events for {mod.Manifest.UniqueID}");
+                    loaded = true;
                 }
                 if (model.RepeatMail?.Count is > 0)
                 {
                     this.MailToForget.UnionWith(model.RepeatMail);
                     this.Monitor.Log($"Loading {model.RepeatMail.Count} forgettable mail for {mod.Manifest.UniqueID}");
+                    loaded = true;
                 }
                 if (model.RepeatResponse?.Count is > 0)
                 {
                     this.ResponseToForget.UnionWith(model.RepeatResponse);
                     this.Monitor.Log($"Loading{model.RepeatResponse.Count} forgettable mail for {mod.Manifest.UniqueID}");
+                    loaded = true;
+                }
+
+                if (loaded && !modimpl.Manifest.Dependencies.Any((dep) => dep.UniqueID.AsSpan().Trim().Equals("misscoriel.eventrepeater", StringComparison.OrdinalIgnoreCase)))
+                {
+                    Monitor.Log($"{modimpl.Manifest.Name} uses Event Repeater features, but doesn't list it as a dependency in its manifest.json. This will stop working in future versions.", LogLevel.Warn);
                 }
             }
             this.Monitor.Log($"Loaded a grand total of\n\t{this.EventsToForget.Count} events\n\t{this.MailToForget.Count} mail\n\t{this.ResponseToForget.Count} responses.");
